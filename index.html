@@ -89,6 +89,18 @@
             font-size: 38px; font-weight: 800; color: #fff;
             text-shadow: 0 2px 16px rgba(0,0,0,0.3);
             margin-bottom: 8px;
+            margin-top: 10px;
+        }
+        .over-cinna {
+            width: 160px; height: 160px;
+            object-fit: contain;
+            animation: cryFloat 1.8s ease-in-out infinite;
+            filter: drop-shadow(0 4px 12px rgba(0,0,0,0.3));
+        }
+        @keyframes cryFloat {
+            0%,100% { transform: translateY(0) rotate(0deg); }
+            30% { transform: translateY(-8px) rotate(-2deg); }
+            70% { transform: translateY(4px) rotate(2deg); }
         }
         .score-big {
             font-size: 56px; font-weight: 800; color: #ffd700;
@@ -134,6 +146,7 @@
         </div>
 
         <div class="overlay hidden" id="over-screen">
+            <img class="over-cinna" src="assets/cinna_cry.png" alt="Cinnamoroll crying" />
             <div class="over-title">💫 游戏结束</div>
             <div class="score-big" id="finalScore">0</div>
             <div class="score-label">得分</div>
@@ -188,10 +201,67 @@
 
         // ======== Audio (Web Audio API - cute sounds) ========
         let actx = null;
+        let bgmPlaying = false;
+        let bgmTimer = null;
+
         function initAudio() {
-            if (actx) return;
+            if (actx) {
+                if (actx.state === 'suspended') actx.resume();
+                if (!bgmPlaying) startBGM();
+                return;
+            }
             actx = new (window.AudioContext || window.webkitAudioContext)();
+            startBGM();
         }
+        // ======== Background Music ========
+        // Cute looping melody using Web Audio API
+        const bgmNotes = [
+            // Melody line 1 (C major - どれみふぁそ)
+            {f:523, d:0.25}, {f:587, d:0.25}, {f:659, d:0.25}, {f:698, d:0.25},
+            {f:784, d:0.5}, {f:698, d:0.25}, {f:659, d:0.25},
+            {f:587, d:0.5}, {f:0, d:0.25}, {f:523, d:0.25},
+            // Melody line 2
+            {f:659, d:0.25}, {f:784, d:0.25}, {f:880, d:0.25}, {f:784, d:0.25},
+            {f:698, d:0.5}, {f:659, d:0.25}, {f:587, d:0.25},
+            {f:523, d:0.5}, {f:0, d:0.25}, {f:440, d:0.25},
+            // Melody line 3 - higher
+            {f:784, d:0.25}, {f:880, d:0.25}, {f:988, d:0.25}, {f:880, d:0.25},
+            {f:784, d:0.5}, {f:698, d:0.25}, {f:659, d:0.25},
+            {f:587, d:0.25}, {f:698, d:0.25}, {f:659, d:0.5},
+            // Resolving line
+            {f:523, d:0.5}, {f:587, d:0.25}, {f:523, d:0.25},
+            {f:440, d:0.5}, {f:0, d:0.25}, {f:523, d:0.25},
+        ];
+
+        function startBGM() {
+            if (!actx || bgmPlaying) return;
+            bgmPlaying = true;
+            let noteIdx = 0;
+
+            function playNextNote() {
+                if (!bgmPlaying || !actx || actx.state === 'closed') return;
+                const note = bgmNotes[noteIdx % bgmNotes.length];
+                if (note.f > 0) {
+                    const o = actx.createOscillator();
+                    const g = actx.createGain();
+                    o.type = 'triangle';
+                    o.frequency.setValueAtTime(note.f, actx.currentTime);
+                    g.gain.setValueAtTime(0.025, actx.currentTime);
+                    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + note.d * 0.9);
+                    o.connect(g); g.connect(actx.destination);
+                    o.start(); o.stop(actx.currentTime + note.d);
+                }
+                noteIdx++;
+                bgmTimer = setTimeout(playNextNote, note.d * 1000);
+            }
+            playNextNote();
+        }
+
+        function stopBGM() {
+            bgmPlaying = false;
+            if (bgmTimer) clearTimeout(bgmTimer);
+        }
+
         function beep(freq, dur, type='sine', vol=0.08) {
             if (!actx) return;
             const o = actx.createOscillator();
@@ -217,12 +287,16 @@
             ['playerJump', 'assets/player_jump.png'],
             ['playerIdle', 'assets/player_idle.png'],
             ['cinnaLove', 'assets/cinna_love.png'],
+            ['cinnaCry', 'assets/cinna_cry.png'],
             ['star', 'assets/star.png'],
             ['heart', 'assets/heart.png'],
             ['cake', 'assets/obstacle_cake.png'],
             ['candy', 'assets/obstacle_candy.png'],
             ['mushroom', 'assets/enemy_mushroom.png'],
             ['mushroomSquish', 'assets/enemy_mushroom_squished.png'],
+            ['runSheet', 'assets/player_run_sheet.png'],
+            ['jumpSheet', 'assets/player_jump_sheet.png'],
+            ['explosionSheet', 'assets/explosion_sheet.png'],
         ];
         let loadedCount = 0;
         manifest.forEach(([k, src]) => {
@@ -239,17 +313,21 @@
             vy: 0, grav: 0.7, jumpPow: -13,
             onGround: true, canDouble: true,
             bob: 0, bobT: 0,
+            animFrame: 0,     // sprite animation frame counter
+            animTimer: 0,     // timer for frame switching
         };
         function resetP() {
             P.y = groundY - P.h;
             P.vy = 0; P.onGround = true;
             P.canDouble = true; P.bob = 0; P.bobT = 0;
+            P.animFrame = 0; P.animTimer = 0;
         }
 
         // ======== World ========
         let groundY = 0;
         let obstacles = [];
         let enemies = [];
+        let explosions = [];
         let pickups = [];
         let particles = [];
         let bgClouds = [];
@@ -296,7 +374,7 @@
             });
         }
 
-        function clearWorld() { obstacles = []; enemies = []; pickups = []; particles = []; }
+        function clearWorld() { obstacles = []; enemies = []; explosions = []; pickups = []; particles = []; }
 
         function spawnParts(x, y, color, n) {
             for (let i = 0; i < n; i++) {
@@ -386,6 +464,14 @@
         function doGameOver() {
             state = GS.OVER; overTimer = 0; shakeAmount = 8;
             sfxHit();
+            // 生成爆炸动画
+            explosions.push({
+                x: P.x + P.w/2 - 60,
+                y: P.y + P.h/2 - 60,
+                w: 120, h: 120,
+                frame: 0, maxFrames: 8,
+                speed: 0.4,
+            });
             if (score > best) { best = score; localStorage.cinnaBest = best; }
             finalScoreEl.textContent = score;
             bestScoreEl.textContent = '最高分: ' + best;
@@ -426,6 +512,17 @@
 
                 P.bobT += P.onGround ? 0.12 : 0.25;
                 P.bob = Math.sin(P.bobT) * (P.onGround ? 5 : 3);
+
+                // Sprite animation
+                if (P.onGround) {
+                    P.animTimer += speed * 0.12;
+                    if (P.animTimer >= 1) { P.animTimer = 0; P.animFrame = (P.animFrame + 1) % 4; }
+                } else {
+                    // Jump animation: frame based on vertical velocity
+                    if (P.vy < -4) P.animFrame = 0;      // rising
+                    else if (P.vy < 0) P.animFrame = 1;    // near peak
+                    else P.animFrame = 2;                   // falling
+                }
 
                 // Scroll objects
                 for (let o of obstacles) o.x -= speed;
@@ -515,6 +612,10 @@
             // Particles
             for (let p of particles) { p.x += p.vx; p.y += p.vy; p.life -= p.decay; }
             particles = particles.filter(p => p.life > 0);
+
+            // Update explosions
+            for (let ex of explosions) { ex.frame += ex.speed; }
+            explosions = explosions.filter(ex => ex.frame < ex.maxFrames);
         }
 
         // ======== Render ========
@@ -574,6 +675,7 @@
         }
 
         function drawPlayer() {
+            if (state === GS.OVER) return; // Don't draw player on game over
             const x = P.x, y = P.y + P.bob;
             const w = P.w, h = P.h;
 
@@ -584,23 +686,42 @@
             ctx.fill();
 
             const floatY = Math.sin(tick * 0.07) * 3;
-            const key = (P.onGround) ? 'player' : 'playerJump';
+            const fw = 100, fh = 100;  // sprite frame size
+            const dx = x - (fw - w)/2;
+            const dy = y - (fh - h)/2 + floatY;
 
-            if (!drawImg(key, x - 10, y - 12 + floatY, w + 20, h + 20)) {
-                // Fallback
-                const fy = y + floatY;
-                ctx.fillStyle = '#fff';
-                ctx.beginPath(); ctx.arc(x + w/2, fy + h*0.42, w*0.38, 0, Math.PI*2); ctx.fill();
-                ctx.beginPath(); ctx.arc(x + w/2, fy + h*0.22, w*0.33, 0, Math.PI*2); ctx.fill();
-                ctx.fillStyle = '#ffb3cc';
-                ctx.beginPath(); ctx.arc(x + w*0.32, fy + h*0.28, 5, 0, Math.PI*2); ctx.fill();
-                ctx.beginPath(); ctx.arc(x + w*0.68, fy + h*0.28, 5, 0, Math.PI*2); ctx.fill();
-                ctx.fillStyle = '#333';
-                ctx.beginPath(); ctx.ellipse(x + w*0.38, fy + h*0.18, 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
-                ctx.beginPath(); ctx.ellipse(x + w*0.62, fy + h*0.18, 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
-                ctx.strokeStyle = '#ff9999'; ctx.lineWidth = 1.5;
-                ctx.beginPath(); ctx.arc(x + w/2, fy + h*0.26, 3.5, 0.1, Math.PI-0.1); ctx.stroke();
+            if (P.onGround) {
+                // Running sprite sheet (4 frames, 400x100)
+                const sheet = IMG['runSheet'];
+                if (sheet && sheet.complete && sheet.naturalWidth > 0) {
+                    ctx.drawImage(sheet, P.animFrame * fw, 0, fw, fh, dx, dy, fw, fh);
+                } else {
+                    fallbackDraw(dx, dy, fw, fh);
+                }
+            } else {
+                // Jumping sprite sheet (3 frames, 300x100)
+                const sheet = IMG['jumpSheet'];
+                if (sheet && sheet.complete && sheet.naturalWidth > 0) {
+                    ctx.drawImage(sheet, P.animFrame * fw, 0, fw, fh, dx, dy, fw, fh);
+                } else {
+                    fallbackDraw(dx, dy, fw, fh);
+                }
             }
+        }
+
+        function fallbackDraw(x, y, w, h) {
+            // Simple fallback character
+            ctx.fillStyle = '#fff';
+            ctx.beginPath(); ctx.arc(x + w/2, y + h*0.42, w*0.38, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(x + w/2, y + h*0.22, w*0.33, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#ffb3cc';
+            ctx.beginPath(); ctx.arc(x + w*0.32, y + h*0.28, 5, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(x + w*0.68, y + h*0.28, 5, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = '#333';
+            ctx.beginPath(); ctx.ellipse(x + w*0.38, y + h*0.18, 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(x + w*0.62, y + h*0.18, 2.5, 3.5, 0, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = '#ff9999'; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(x + w/2, y + h*0.26, 3.5, 0.1, Math.PI-0.1); ctx.stroke();
         }
 
         function drawObstacles() {
@@ -703,9 +824,29 @@
         }
 
         function drawOverDecor() {
-            if (state !== GS.OVER) return;
-            const fy = Math.sin(overTimer * 0.04) * 8;
-            drawImg('cinnaLove', W/2 - 65, H*0.28 - 60 + fy, 130, 130, 0.7);
+            // Crying Cinnamoroll is now in HTML overlay, not canvas
+        }
+
+        function drawExplosions() {
+            for (let ex of explosions) {
+                const f = Math.floor(ex.frame);
+                if (f >= ex.maxFrames) continue;
+                const sheet = IMG['explosionSheet'];
+                if (sheet && sheet.complete && sheet.naturalWidth > 0) {
+                    ctx.save();
+                    ctx.globalAlpha = 1 - f / ex.maxFrames * 0.4;
+                    ctx.drawImage(sheet, f * 120, 0, 120, 120, ex.x, ex.y, ex.w, ex.h);
+                    ctx.restore();
+                } else {
+                    // Fallback explosion circles
+                    const alpha = 1 - f / ex.maxFrames;
+                    const r = 10 + f * 15;
+                    ctx.fillStyle = `rgba(255,200,50,${alpha * 0.6})`;
+                    ctx.beginPath(); ctx.arc(ex.x + ex.w/2, ex.y + ex.h/2, r, 0, Math.PI*2); ctx.fill();
+                    ctx.fillStyle = `rgba(255,255,200,${alpha * 0.4})`;
+                    ctx.beginPath(); ctx.arc(ex.x + ex.w/2, ex.y + ex.h/2, r * 0.6, 0, Math.PI*2); ctx.fill();
+                }
+            }
         }
 
         function render() {
@@ -727,6 +868,7 @@
 
             if (state === GS.PLAY || state === GS.OVER) drawPlayer();
             drawOverDecor();
+            drawExplosions();
             drawParticles();
 
             ctx.restore();
