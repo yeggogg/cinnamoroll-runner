@@ -595,7 +595,18 @@
                     return true;
                 });
 
-                score += Math.floor(speed * 0.15);
+                // 间隔加分：每50帧给距离分，头上冒数字
+                if (tick % 50 === 0 && tick > 0) {
+                    const distPts = Math.floor(speed * 1.5) + 1;
+                    score += distPts;
+                    scorePopups.push({
+                        x: P.x + P.w/2,
+                        y: P.y - 10,
+                        text: '+' + distPts,
+                        life: 35,
+                        color: '#ffe0a0',
+                    });
+                }
                 hudScore.textContent = score;
 
                 // Spawning
