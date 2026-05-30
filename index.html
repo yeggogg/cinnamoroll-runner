@@ -330,6 +330,7 @@
         let explosions = [];
         let pickups = [];
         let particles = [];
+        let scorePopups = [];   // 浮动加分文字
         let bgClouds = [];
         let shakeAmount = 0;
 
@@ -374,7 +375,7 @@
             });
         }
 
-        function clearWorld() { obstacles = []; enemies = []; explosions = []; pickups = []; particles = []; }
+        function clearWorld() { obstacles = []; enemies = []; explosions = []; pickups = []; particles = []; scorePopups = []; }
 
         function spawnParts(x, y, color, n) {
             for (let i = 0; i < n; i++) {
@@ -564,8 +565,9 @@
                             P.onGround = false;
                             P.canDouble = true;
                             // Score bonus
-                            score += 30;
-                            // Show bonus text effect (via particles)
+                            score += 80;
+                            // 浮动加分文字
+                            scorePopups.push({ x: e.x + e.w/2, y: e.y - 10, text: '+80', life: 50, color: '#ffd700' });
                             spawnParts(e.x + e.w/2, e.y, '#ffd700', 10);
                             spawnParts(e.x + e.w/2, e.y, '#ff6b9d', 8);
                             sfxStomp();
@@ -584,7 +586,8 @@
                 pickups = pickups.filter(p => {
                     const pb2 = { x: p.x + 3, y: p.y + p.phase * 3 + 3, w: p.w - 6, h: p.h - 6 };
                     if (aabb(pb, pb2)) {
-                        score += 15;
+                        score += 50;
+                        scorePopups.push({ x: p.x + p.w/2, y: p.y, text: '+50', life: 40, color: '#fff' });
                         spawnParts(p.x + p.w/2, p.y + p.h/2, '#ffd700', 6);
                         sfxCollect();
                         return false;
@@ -592,7 +595,7 @@
                     return true;
                 });
 
-                score += Math.floor(speed * 0.12);
+                score += Math.floor(speed * 0.15);
                 hudScore.textContent = score;
 
                 // Spawning
@@ -612,6 +615,10 @@
             // Particles
             for (let p of particles) { p.x += p.vx; p.y += p.vy; p.life -= p.decay; }
             particles = particles.filter(p => p.life > 0);
+
+            // Score popups
+            for (let sp of scorePopups) { sp.y -= 0.8; sp.life--; }
+            scorePopups = scorePopups.filter(sp => sp.life > 0);
 
             // Update explosions
             for (let ex of explosions) { ex.frame += ex.speed; }
@@ -791,6 +798,23 @@
             }
         }
 
+        function drawScorePopups() {
+            for (let sp of scorePopups) {
+                const alpha = Math.min(1, sp.life / 30);
+                const scale = 1 + ((50 - sp.life) / 50) * 0.4;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = sp.color;
+                ctx.font = `bold ${Math.floor(18 * scale)}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                ctx.lineWidth = 3;
+                ctx.strokeText(sp.text, sp.x, sp.y);
+                ctx.fillText(sp.text, sp.x, sp.y);
+                ctx.restore();
+            }
+        }
+
         function drawIdleDecor() {
             if (state !== GS.IDLE) return;
             const cx = W/2, cy = H * 0.3;
@@ -870,6 +894,7 @@
             drawOverDecor();
             drawExplosions();
             drawParticles();
+            drawScorePopups();
 
             ctx.restore();
         }
